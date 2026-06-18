@@ -1,0 +1,86 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: crm-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-crm_epem}
+      POSTGRES_USER: ${POSTGRES_USER:-crm_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-crm_secure_2026}
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/db/init.sql:/docker-entrypoint-initdb.d/01-init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-crm_admin} -d ${POSTGRES_DB:-crm_epem}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - crm-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: crm-redis
+    restart: unless-stopped
+    ports:
+      - "6381:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - crm-network
+
+  fastapi:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: crm-fastapi
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - ./logs:/app/logs
+    networks:
+      - crm-network
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  nextjs:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: crm-nextjs
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    depends_on:
+      - fastapi
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    networks:
+      - crm-network
+    command: npm run dev
+
+volumes:
+  postgres_data:
+
+networks:
+  crm-network:
+    driver: bridge

@@ -1,0 +1,64 @@
+@import "tailwindcss";
+
+/* === Linear — Midnight Command Center === */
+/* Refero Design System — https://refero.design */
+
+@theme {
+  /* ── Colors ── */
+  --color-pitch-black: #08090a;
+  --color-graphite: #0f1011;
+  --color-deep-slate: #161718;
+  --color-charcoal-grey: #23252a;
+  --color-muted-ash: #323334;
+  --color-gunmetal: #383b3f;
+  --color-porcelain: #f7f8f8;
+  --color-light-steel: #d0d6e0;
+  --color-storm-cloud: #8a8f98;
+  --color-fog-grey: #62666d;
+  --color-alabaster: #e5e5e6;
+  --color-neon-lime: #e4f222;
+  --color-aether-blue: #5e6ad2;
+  --color-forest-green: #008d2c;
+  --color-cyan-spark: #02b8cc;
+  --color-emerald: #27a644;
+  --color-warning-red: #eb5757;
+  --color-deep-violet: #6366f1;
+  --color-amethyst: #8b5cf6;
+
+  /* ── Typography ── */
+  --font-inter-variable: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: 'Berkeley Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  /* ── Spacing ── */
+  --spacing-unit: 4px;
+
+  /* ── Border Radius ── */
+  --radius-sm: 2px;
+  --radius-md: 6px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+}
+
+/* ── Base Styles ── */
+body {
+  background-color: var(--color-pitch-black);
+  color: var(--color-porcelain);
+  font-family: var(--font-inter-variable);
+  font-size: 14px;
+  line-height: 1.4;
+  letter-spacing: -0.13px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Scrollbar (dark, subtle) ── */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-pitch-black);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-muted-ash);
+  border-radius: 3px;
+}
