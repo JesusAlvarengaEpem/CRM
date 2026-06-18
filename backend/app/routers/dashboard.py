@@ -2074,22 +2074,25 @@ async def get_resumen(
     monto_total = sum(_load_contract_amounts(contract_ids).values()) if contract_ids else 0
 
     # Por unidad de negocio — leads por first_seen_at, ventas por last_updated_at
+    # Ventas usan COUNT(DISTINCT contract_id) para no inflar cuando hay múltiples
+    # leads con el mismo contract_id (regresiones, re-gestiones, etc.)
     result = await db.execute(text(f"""
         SELECT
             lu.enterprise_id,
             (SELECT COUNT(*) FROM crm.leads_unificados WHERE enterprise_id = lu.enterprise_id AND {where_time}) as leads,
-            (SELECT COUNT(*) FROM crm.leads_unificados WHERE enterprise_id = lu.enterprise_id
-             AND status = 15 AND (classification_flags->>'es_venta')::int = 1 AND {where_venta_time}) as ventas,
+            (SELECT COUNT(DISTINCT contract_id) FROM crm.leads_unificados WHERE enterprise_id = lu.enterprise_id
+             AND status = 15 AND (classification_flags->>'es_venta')::int = 1 AND {where_venta_time}
+             AND contract_id IS NOT NULL) as ventas,
             (SELECT COUNT(*) FROM crm.leads_unificados WHERE enterprise_id = lu.enterprise_id AND {where_time}
              AND classification_flags->>'tipo_cartera' = 'Caliente') as caliente,
             (SELECT COUNT(*) FROM crm.leads_unificados WHERE enterprise_id = lu.enterprise_id AND {where_time}
              AND classification_flags->>'tipo_cartera' = 'Fria') as fria,
-            (SELECT COUNT(*) FROM crm.leads_unificados WHERE enterprise_id = lu.enterprise_id
+            (SELECT COUNT(DISTINCT contract_id) FROM crm.leads_unificados WHERE enterprise_id = lu.enterprise_id
              AND status = 15 AND (classification_flags->>'es_venta')::int = 1 AND {where_venta_time}
-             AND classification_flags->>'tipo_cartera' = 'Caliente') as ventas_calientes,
-            (SELECT COUNT(*) FROM crm.leads_unificados WHERE enterprise_id = lu.enterprise_id
+             AND classification_flags->>'tipo_cartera' = 'Caliente' AND contract_id IS NOT NULL) as ventas_calientes,
+            (SELECT COUNT(DISTINCT contract_id) FROM crm.leads_unificados WHERE enterprise_id = lu.enterprise_id
              AND status = 15 AND (classification_flags->>'es_venta')::int = 1 AND {where_venta_time}
-             AND classification_flags->>'tipo_cartera' = 'Fria') as ventas_frias
+             AND classification_flags->>'tipo_cartera' = 'Fria' AND contract_id IS NOT NULL) as ventas_frias
         FROM crm.leads_unificados lu
         WHERE lu.enterprise_id IS NOT NULL
         GROUP BY lu.enterprise_id ORDER BY leads DESC
@@ -2120,12 +2123,13 @@ async def get_resumen(
             "monto": round(monto_un, 2),
         })
 
-    # Por origen
+    # Por origen — ventas usan COUNT(DISTINCT contract_id) para consistencia
     result = await db.execute(text(f"""
         SELECT
             COALESCE(classification_flags->>'origen_lead', 'Manual') as origen,
             COUNT(*) as leads,
-            COUNT(*) FILTER (WHERE status = 15 AND (classification_flags->>'es_venta')::int = 1) as ventas,
+            COUNT(DISTINCT contract_id) FILTER (WHERE status = 15 AND (classification_flags->>'es_venta')::int = 1
+             AND contract_id IS NOT NULL) as ventas,
             COUNT(*) FILTER (WHERE classification_flags->>'tipo_cartera' = 'Caliente') as caliente,
             COUNT(*) FILTER (WHERE classification_flags->>'tipo_cartera' = 'Fria') as fria
         FROM crm.leads_unificados
