@@ -89,6 +89,7 @@ class ThinkChatSync:
         contract_map: dict[str, int] = {}
         contract_date_map: dict[str, str] = {}  # phone → contract_date
         contract_seller_map: dict[str, int] = {}  # phone → seller_id
+        contract_enterprise_map: dict[str, int] = {}  # CRM-FIX-2: phone → enterprise_id REAL del contract EPEM
         try:
             with pymysql.connect(**epem, connect_timeout=10, cursorclass=pymysql.cursors.SSCursor) as conn:
                 with conn.cursor() as cur:
@@ -101,11 +102,13 @@ class ThinkChatSync:
                             contract_map[pn] = contract_id
                             contract_date_map[pn] = str(contract_date) if contract_date else None
                             contract_seller_map[pn] = seller_id if seller_id else None
+                            contract_enterprise_map[pn] = enterprise_id
                             phones.add(pn)
             self._venta_phones_cache = phones
             self._contract_map_cache = contract_map
             self._contract_date_cache = contract_date_map
             self._contract_seller_cache = contract_seller_map
+            self._contract_enterprise_cache = contract_enterprise_map
             logger.info(
                 f"Cross-match (dash_core.py rules): {len(phones)} unique phones, "
                 f"contracts status IN(1,2,3,5,6), enterprise IN(1,2,5), "
@@ -147,6 +150,7 @@ class ThinkChatSync:
         contract_map = getattr(self, "_contract_map_cache", {})
         contract_date_map = getattr(self, "_contract_date_cache", {})
         contract_seller_map = getattr(self, "_contract_seller_cache", {})
+        contract_enterprise_map = getattr(self, "_contract_enterprise_cache", {})
 
         # 3) SQL de UPSERT — mismo target epem_opportunity_id para idempotencia
         # IMPORTANTE: contract_id se guarda en la COLUMNA (no solo en jsonb) para que
@@ -197,6 +201,10 @@ class ThinkChatSync:
                     ventas_matcheadas += 1
                     contract_id_real = contract_map.get(phone)
                     contract_date_str = contract_date_map.get(phone)
+                    # CRM-FIX-2: usar enterprise_id REAL del contract EPEM, no del lead ThinkChat
+                    enterprise_id_real = contract_enterprise_map.get(phone)
+                    if enterprise_id_real is not None:
+                        enterprise_id = enterprise_id_real
                     # epem_opportunity_id deterministico: MD5(phone|enterprise) → estable entre reinicios
                     seed = f"{phone}|{enterprise_id}"
                     epem_id = -(int(hashlib.md5(seed.encode()).hexdigest()[:8], 16) % 10_000_000)
