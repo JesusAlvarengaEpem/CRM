@@ -220,16 +220,27 @@ class EPEMSync:
         # Determine the last sync watermark
         # NOTA: so.updated_at es un INT corrupto (157049, 156843, etc) en MySQL — NO es timestamp.
         # Usamos so.id (monotonico) como watermark. Esto es seguro porque so.id es BIGINT auto-increment.
+        #
+        # Filtro de calidad: solo importar opportunities que sean:
+        #   1. Botmaker (observation contiene "Botmaker")
+        #   2. Ventas reales (contract_id > 0) — vengan de donde vengan
+        #   3. Cargadas por SISTEMA (creator = 1) — carga automatica
+        # Esto filtra las bases de telefono inyectadas manualmente por vendedores
+        # (creators 2,3,4 con 0.02-4% conversion) que son ruido sin valor analitico.
+        quality_filter = (
+            "(so.observation LIKE '%Botmaker%' OR so.contract_id IS NOT NULL OR so.creator = 1)"
+        )
+
         if full:
-            where_clause = "WHERE so.status != 30"
+            where_clause = f"WHERE so.status != 30 AND {quality_filter}"
         else:
             with self.pg_conn.cursor() as cur:
                 cur.execute("SELECT MAX(epem_opportunity_id) FROM crm.leads_unificados WHERE epem_opportunity_id > 0")
                 last_id = cur.fetchone()[0]
             if last_id:
-                where_clause = f"WHERE so.id > {int(last_id)} AND so.status != 30"
+                where_clause = f"WHERE so.id > {int(last_id)} AND so.status != 30 AND {quality_filter}"
             else:
-                where_clause = "WHERE so.status != 30"
+                where_clause = f"WHERE so.status != 30 AND {quality_filter}"
 
         # Fetch from EPEM MySQL
         query = f"""
