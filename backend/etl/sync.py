@@ -412,7 +412,13 @@ class EPEMSync:
                     lead_with_json = dict(lead)
                     lead_with_json["sources"] = json.dumps(lead["sources"].adapted)
                     lead_with_json["classification_flags"] = json.dumps(lead["classification_flags"].adapted)
-                    cur.execute(sql, lead_with_json)
+                    # Savepoint por insert — si choca con idx_leads_contract_unique, no destruye el batch
+                    cur.execute("SAVEPOINT incremental_sp")
+                    try:
+                        cur.execute(sql, lead_with_json)
+                        cur.execute("RELEASE SAVEPOINT incremental_sp")
+                    except psycopg2.IntegrityError:
+                        cur.execute("ROLLBACK TO SAVEPOINT incremental_sp")
             self.pg_conn.commit()
         except Exception as e:
             logger.error(f"Batch insert failed: {e}")

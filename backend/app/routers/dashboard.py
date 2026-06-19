@@ -1561,9 +1561,15 @@ async def get_actividad(
     result = await db.execute(text(final_sql), params)
     rows = result.fetchall()
 
-    # Collect contract IDs for amount lookup
+    # Collect contract IDs for amount lookup — directo del DW
     contract_ids = [r.contract_id for r in rows if r.contract_id and r.tipo == "venta"]
-    amounts = _load_contract_amounts(contract_ids) if contract_ids else {}
+    amounts = {}
+    if contract_ids:
+        result_amt = await db.execute(text(
+            "SELECT contract_id, amount FROM crm.leads_unificados "
+            "WHERE contract_id = ANY(:cids) AND amount IS NOT NULL"
+        ), {"cids": contract_ids})
+        amounts = {r.contract_id: float(r.amount) for r in result_amt.fetchall()}
 
     # Build response
     eventos = []
@@ -1649,21 +1655,22 @@ async def get_actividad_stats(
         WHERE {where_sql}
           AND status = 15
           AND (classification_flags->>'es_venta')::int = 1
-          AND last_updated_at >= CURRENT_DATE
+          AND contract_date >= CURRENT_DATE
     """), params)
     ventas_hoy = result.scalar()
 
-    # Monto hoy — fetch contract IDs then amounts from EPEM
+    # Monto hoy — directo del DW con amount
     result = await db.execute(text(f"""
-        SELECT contract_id FROM crm.leads_unificados
+        SELECT COALESCE(SUM(amount), 0) as monto
+        FROM crm.leads_unificados
         WHERE {where_sql}
           AND status = 15
           AND (classification_flags->>'es_venta')::int = 1
-          AND last_updated_at >= CURRENT_DATE
+          AND contract_date >= CURRENT_DATE
           AND contract_id IS NOT NULL
+          AND amount IS NOT NULL
     """), params)
-    contract_ids = [r[0] for r in result.fetchall()]
-    monto_hoy = sum(_load_contract_amounts(contract_ids).values()) if contract_ids else 0
+    monto_hoy = float(result.fetchone().monto or 0)
 
     # Semana (7 días) para contexto
     result = await db.execute(text(f"""
@@ -1722,7 +1729,8 @@ async def get_lead_detail(
     result = await db.execute(text("""
         SELECT
             id, normalized_phone, fullname, email, enterprise_id, branch_id,
-            seller_id, closer_id, contract_id, status, observation,
+            seller_id, closer_id, supervisor_id, contract_id, contract_date, amount,
+            status, observation,
             classification_flags, first_seen_at, last_updated_at,
             epem_opportunity_id, bm_customer_id, ad_id
         FROM crm.leads_unificados
@@ -1755,15 +1763,17 @@ async def get_lead_detail(
         "es_thinkchat": (row.classification_flags or {}).get("es_thinkchat", 0) if row.classification_flags else 0,
         "first_seen_at": row.first_seen_at.isoformat() if row.first_seen_at else None,
         "last_updated_at": row.last_updated_at.isoformat() if row.last_updated_at else None,
+        "contract_date": row.contract_date.isoformat() if hasattr(row, 'contract_date') and row.contract_date else None,
         "epem_opportunity_id": row.epem_opportunity_id,
         "bm_customer_id": row.bm_customer_id,
         "ad_id": row.ad_id,
+        "supervisor_id": row.supervisor_id if hasattr(row, 'supervisor_id') else None,
+        "supervisor_nombre": _get_seller_name(row.supervisor_id) if hasattr(row, 'supervisor_id') and row.supervisor_id else None,
     }
 
-    # Monto del contrato
+    # Monto del contrato — directo del DW
     if row.contract_id and lead["es_venta"]:
-        amounts = _load_contract_amounts([row.contract_id])
-        lead["monto"] = amounts.get(row.contract_id)
+        lead["monto"] = float(row.amount) if hasattr(row, 'amount') and row.amount else None
 
     # Timeline de trackings
     result = await db.execute(text("""
@@ -2022,7 +2032,7 @@ async def get_resumen(
     # Rango: si hay desde/hasta, usar fechas exactas; sino, dias
     if desde and hasta:
         where_time = f"first_seen_at >= '{desde}' AND first_seen_at <= '{hasta}'::date + INTERVAL '1 day'"
-        where_venta_time = f"last_updated_at >= '{desde}' AND last_updated_at <= '{hasta}'::date + INTERVAL '1 day'"
+        where_venta_time = f"contract_date >= '{desde}' AND contract_date <= '{hasta}'::date + INTERVAL '1 day'"
         rango_label = f"{desde} a {hasta}"
     else:
         if dias == 1:
@@ -2032,9 +2042,9 @@ async def get_resumen(
             interval = f"CURRENT_DATE - INTERVAL '{dias} days'"
             rango_label = f"{dias} dias"
         where_time = f"first_seen_at >= {interval}"
-        where_venta_time = f"last_updated_at >= {interval}"
+        where_venta_time = f"contract_date >= {interval}"
 
-    # Totales generales — leads por first_seen_at, ventas por last_updated_at (DISTINCT contract_id)
+    # Totales generales — leads por first_seen_at, ventas por contract_date (DISTINCT contract_id)
     # Externas NO cuentan como leads ni afectan conversion
     result = await db.execute(text(f"""
         SELECT
@@ -2064,16 +2074,18 @@ async def get_resumen(
     total_ventas = ventas_de_leads + ventas_externas
     conversion = round((ventas_de_leads / total_leads) * 100, 2) if total_leads else 0
 
-    # Monto total de ventas
+    # Monto total de ventas — directo del DW con amount (sin query a EPEM)
     result = await db.execute(text(f"""
-        SELECT contract_id FROM crm.leads_unificados
+        SELECT COALESCE(SUM(amount), 0) as monto_total,
+               COUNT(DISTINCT contract_id) as total_ventas
+        FROM crm.leads_unificados
         WHERE status = 15 AND (classification_flags->>'es_venta')::int = 1
-          AND {where_venta_time} AND contract_id IS NOT NULL
+          AND {where_venta_time} AND contract_id IS NOT NULL AND amount IS NOT NULL
     """))
-    contract_ids = [r[0] for r in result.fetchall()]
-    monto_total = sum(_load_contract_amounts(contract_ids).values()) if contract_ids else 0
+    monto_row = result.fetchone()
+    monto_total = float(monto_row.monto_total or 0)
 
-    # Por unidad de negocio — leads por first_seen_at, ventas por last_updated_at
+    # Por unidad de negocio — leads por first_seen_at, ventas por contract_date
     # Ventas usan COUNT(DISTINCT contract_id) para no inflar cuando hay múltiples
     # leads con el mismo contract_id (regresiones, re-gestiones, etc.)
     result = await db.execute(text(f"""
@@ -2101,15 +2113,15 @@ async def get_resumen(
     for r in result.fetchall():
         leads = r.leads or 0
         ventas = r.ventas or 0
-        # Monto por UN
+        # Monto por UN — directo del DW con amount
         result2 = await db.execute(text(f"""
-            SELECT contract_id FROM crm.leads_unificados
+            SELECT COALESCE(SUM(amount), 0) as monto
+            FROM crm.leads_unificados
             WHERE enterprise_id = {r.enterprise_id}
               AND status = 15 AND (classification_flags->>'es_venta')::int = 1
-              AND {where_venta_time} AND contract_id IS NOT NULL
+              AND {where_venta_time} AND contract_id IS NOT NULL AND amount IS NOT NULL
         """))
-        contract_ids_un = [c[0] for c in result2.fetchall()]
-        monto_un = sum(_load_contract_amounts(contract_ids_un).values()) if contract_ids_un else 0
+        monto_un = float(result2.fetchone().monto or 0)
         por_un.append({
             "enterprise_id": r.enterprise_id,
             "un_nombre": _un_names.get(r.enterprise_id, f"UN {r.enterprise_id}"),
