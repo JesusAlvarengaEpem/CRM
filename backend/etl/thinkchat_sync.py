@@ -154,7 +154,9 @@ class ThinkChatSync:
         # 3) SQL de UPSERT — mismo target epem_opportunity_id para idempotencia
         # IMPORTANTE: contract_id se guarda en la COLUMNA (no solo en jsonb) para que
         # las queries del dashboard que usan COUNT(DISTINCT contract_id) funcionen.
-        sql = """
+        # CRM-FIX: ThinkChat tiene prioridad sobre externo. Para ventas con contract_id,
+        # se usa ON CONFLICT (contract_id) para reclamar el registro del externo.
+        sql_lead = """
             INSERT INTO crm.leads_unificados (
                 normalized_phone, fullname, email, enterprise_id,
                 sources, botmaker_observation, ad_id, campaign_id,
@@ -182,6 +184,40 @@ class ThinkChatSync:
                 status = EXCLUDED.status,
                 classification_flags = EXCLUDED.classification_flags,
                 last_updated_at = EXCLUDED.last_updated_at
+        """
+
+        # SQL para ventas: upsert por contract_id (ThinkChat tiene prioridad sobre externo)
+        sql_venta = """
+            INSERT INTO crm.leads_unificados (
+                normalized_phone, fullname, email, enterprise_id,
+                sources, botmaker_observation, ad_id, campaign_id,
+                whatsapp_number, seller_id, contract_id,
+                status, observation, lead, classification_flags,
+                first_seen_at, last_updated_at,
+                epem_opportunity_id
+            ) VALUES (
+                %(normalized_phone)s, %(fullname)s, %(email)s, %(enterprise_id)s,
+                %(sources)s::jsonb, %(observation)s, %(ad_id)s, NULL,
+                 %(whatsapp_number)s, %(seller_id)s, %(contract_id)s,
+                 %(status)s, %(observation)s, %(lead_label)s, %(classification_flags)s::jsonb,
+                 %(first_seen_at)s, %(last_updated_at)s,
+                 %(epem_opportunity_id)s
+            )
+            ON CONFLICT (contract_id) WHERE contract_id > 0 DO UPDATE SET
+                normalized_phone = EXCLUDED.normalized_phone,
+                fullname = EXCLUDED.fullname,
+                enterprise_id = EXCLUDED.enterprise_id,
+                sources = EXCLUDED.sources,
+                botmaker_observation = EXCLUDED.botmaker_observation,
+                ad_id = EXCLUDED.ad_id,
+                whatsapp_number = EXCLUDED.whatsapp_number,
+                seller_id = EXCLUDED.seller_id,
+                status = EXCLUDED.status,
+                observation = EXCLUDED.observation,
+                lead = EXCLUDED.lead,
+                classification_flags = EXCLUDED.classification_flags,
+                last_updated_at = EXCLUDED.last_updated_at,
+                epem_opportunity_id = EXCLUDED.epem_opportunity_id
         """
 
         with self.pg_conn.cursor() as cur:
@@ -278,7 +314,9 @@ class ThinkChatSync:
 
                 try:
                     cur.execute("SAVEPOINT thinkchat_sp")
-                    cur.execute(sql, params)
+                    # Ventas: upsert por contract_id (ThinkChat tiene prioridad sobre externo)
+                    # Leads puros: upsert por epem_opportunity_id
+                    cur.execute(sql_venta if es_venta else sql_lead, params)
                     cur.execute("RELEASE SAVEPOINT thinkchat_sp")
                     upserted += 1
                 except psycopg2.IntegrityError as ie:

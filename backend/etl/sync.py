@@ -179,7 +179,12 @@ class EPEMSync:
                 normalized_phone = EXCLUDED.normalized_phone,
                 fullname = EXCLUDED.fullname,
                 email = EXCLUDED.email,
-                sources = EXCLUDED.sources,
+                sources = CASE
+                    WHEN crm.leads_unificados.sources @> '["thinkchat"]'::jsonb
+                      OR crm.leads_unificados.sources @> '["externo"]'::jsonb
+                    THEN crm.leads_unificados.sources
+                    ELSE EXCLUDED.sources
+                END,
                 bm_customer_id = EXCLUDED.bm_customer_id,
                 botmaker_observation = EXCLUDED.botmaker_observation,
                 botmaker_chat_platform = EXCLUDED.botmaker_chat_platform,
@@ -367,7 +372,12 @@ class EPEMSync:
                 normalized_phone = EXCLUDED.normalized_phone,
                 fullname = EXCLUDED.fullname,
                 email = EXCLUDED.email,
-                sources = EXCLUDED.sources,
+                sources = CASE
+                    WHEN crm.leads_unificados.sources @> '["thinkchat"]'::jsonb
+                      OR crm.leads_unificados.sources @> '["externo"]'::jsonb
+                    THEN crm.leads_unificados.sources
+                    ELSE EXCLUDED.sources
+                END,
                 bm_customer_id = EXCLUDED.bm_customer_id,
                 botmaker_observation = EXCLUDED.botmaker_observation,
                 botmaker_chat_platform = EXCLUDED.botmaker_chat_platform,
