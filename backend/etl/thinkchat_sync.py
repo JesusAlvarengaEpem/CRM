@@ -277,15 +277,17 @@ class ThinkChatSync:
                 }
 
                 try:
+                    cur.execute("SAVEPOINT thinkchat_sp")
                     cur.execute(sql, params)
+                    cur.execute("RELEASE SAVEPOINT thinkchat_sp")
                     upserted += 1
                 except psycopg2.IntegrityError as ie:
                     duplicates_skipped += 1
-                    self.pg_conn.rollback()
+                    cur.execute("ROLLBACK TO SAVEPOINT thinkchat_sp")
                 except Exception as e:
                     errors += 1
                     logger.error(f"Insert failed for {phone}: {e}")
-                    self.pg_conn.rollback()
+                    cur.execute("ROLLBACK TO SAVEPOINT thinkchat_sp")
 
         self.pg_conn.commit()
         result = {
