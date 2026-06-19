@@ -79,8 +79,7 @@ class ThinkChatSync:
         JOIN clients cl ON cc.client_id = cl.id
         LEFT JOIN phone_numbers pn ON cl.id = pn.client_id
         WHERE con.status IN (1, 2, 3, 5, 6)
-          AND con.request_financing_number IS NULL
-          AND con.enterprise_id IN (1, 2, 5)
+          AND con.enterprise_id IN (1, 2, 3, 4, 5, 9, 14)
           AND con.date >= %s
           AND con.date <= %s
         """
@@ -110,9 +109,9 @@ class ThinkChatSync:
             self._contract_seller_cache = contract_seller_map
             self._contract_enterprise_cache = contract_enterprise_map
             logger.info(
-                f"Cross-match (dash_core.py rules): {len(phones)} unique phones, "
-                f"contracts status IN(1,2,3,5,6), enterprise IN(1,2,5), "
-                f"request_financing_number IS NULL, {date_from} -> {date_to}"
+                f"Cross-match: {len(phones)} unique phones, "
+                f"contracts status IN(1,2,3,5,6), enterprise IN(1,2,3,4,5,9,14), "
+                f"{date_from} -> {date_to}"
             )
             return phones
         except Exception as e:

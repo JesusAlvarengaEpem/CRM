@@ -605,8 +605,7 @@ def run_externas_sync():
             JOIN clients cl ON cc.client_id = cl.id
             LEFT JOIN phone_numbers pn ON cl.id = pn.client_id
             WHERE con.status IN (1, 2, 3, 5, 6)
-              AND con.request_financing_number IS NULL
-              AND con.enterprise_id IN (1, 2, 5)
+              AND con.enterprise_id IN (1, 2, 3, 4, 5, 9, 14)
         """)
 
         # 3. Filter out contracts already in DW, keep only externas
