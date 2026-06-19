@@ -1918,7 +1918,7 @@ async def get_leads(
     """
     Sección de leads entrantes: stats por fuente/UN + tabla paginada.
     """
-    where_clauses = [f"first_seen_at >= CURRENT_DATE - INTERVAL '{dias} days'"]
+    where_clauses = [f"first_seen_at >= CURRENT_DATE - INTERVAL '{dias - 1} days'"]
     params = {}
 
     if enterprise_id:
