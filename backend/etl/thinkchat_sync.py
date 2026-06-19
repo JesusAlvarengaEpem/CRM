@@ -162,14 +162,14 @@ class ThinkChatSync:
                 sources, botmaker_observation, ad_id, campaign_id,
                 whatsapp_number, seller_id, contract_id,
                 status, observation, lead, classification_flags,
-                first_seen_at, last_updated_at,
+                first_seen_at, last_updated_at, contract_date,
                 epem_opportunity_id
             ) VALUES (
                 %(normalized_phone)s, %(fullname)s, %(email)s, %(enterprise_id)s,
                 %(sources)s::jsonb, %(observation)s, %(ad_id)s, NULL,
                  %(whatsapp_number)s, %(seller_id)s, %(contract_id)s,
                  %(status)s, %(observation)s, %(lead_label)s, %(classification_flags)s::jsonb,
-                 %(first_seen_at)s, %(last_updated_at)s,
+                 %(first_seen_at)s, %(last_updated_at)s, %(contract_date)s,
                  %(epem_opportunity_id)s
             )
             ON CONFLICT (epem_opportunity_id) DO UPDATE SET
@@ -183,7 +183,8 @@ class ThinkChatSync:
                 contract_id = EXCLUDED.contract_id,
                 status = EXCLUDED.status,
                 classification_flags = EXCLUDED.classification_flags,
-                last_updated_at = EXCLUDED.last_updated_at
+                last_updated_at = EXCLUDED.last_updated_at,
+                contract_date = COALESCE(EXCLUDED.contract_date, crm.leads_unificados.contract_date)
         """
 
         # SQL para ventas: upsert por contract_id (ThinkChat tiene prioridad sobre externo)
@@ -193,14 +194,14 @@ class ThinkChatSync:
                 sources, botmaker_observation, ad_id, campaign_id,
                 whatsapp_number, seller_id, contract_id,
                 status, observation, lead, classification_flags,
-                first_seen_at, last_updated_at,
+                first_seen_at, last_updated_at, contract_date,
                 epem_opportunity_id
             ) VALUES (
                 %(normalized_phone)s, %(fullname)s, %(email)s, %(enterprise_id)s,
                 %(sources)s::jsonb, %(observation)s, %(ad_id)s, NULL,
                  %(whatsapp_number)s, %(seller_id)s, %(contract_id)s,
                  %(status)s, %(observation)s, %(lead_label)s, %(classification_flags)s::jsonb,
-                 %(first_seen_at)s, %(last_updated_at)s,
+                 %(first_seen_at)s, %(last_updated_at)s, %(contract_date)s,
                  %(epem_opportunity_id)s
             )
             ON CONFLICT (contract_id) WHERE contract_id > 0 DO UPDATE SET
@@ -217,6 +218,7 @@ class ThinkChatSync:
                 lead = EXCLUDED.lead,
                 classification_flags = EXCLUDED.classification_flags,
                 last_updated_at = EXCLUDED.last_updated_at,
+                contract_date = COALESCE(EXCLUDED.contract_date, crm.leads_unificados.contract_date),
                 epem_opportunity_id = EXCLUDED.epem_opportunity_id
         """
 
@@ -309,6 +311,7 @@ class ThinkChatSync:
                     "classification_flags": Json(flags),
                     "first_seen_at": fecha_ingreso,
                     "last_updated_at": venta_ts if es_venta else now,
+                    "contract_date": venta_ts if es_venta else None,
                     "epem_opportunity_id": epem_id,
                 }
 

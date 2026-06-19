@@ -616,6 +616,8 @@ def run_externas_sync():
                 con.enterprise_id,
                 con.date AS contract_date,
                 con.user_id AS seller_id,
+                con.seller_supervisor_id AS supervisor_id,
+                con.sales_closer_id AS closer_id,
                 con.amount,
                 cl.first_name,
                 cl.last_name,
@@ -652,6 +654,9 @@ def run_externas_sync():
                 "enterprise_id": row["enterprise_id"],
                 "contract_date": row["contract_date"],
                 "seller_id": row["seller_id"],
+                "supervisor_id": row["supervisor_id"],
+                "closer_id": row["closer_id"],
+                "amount": row["amount"],
                 "phone": pn,
                 "fullname": fullname,
                 "epem_id": epem_id,
@@ -664,14 +669,14 @@ def run_externas_sync():
         sql = """
             INSERT INTO crm.leads_unificados (
                 normalized_phone, fullname, email, enterprise_id, sources,
-                observation, ad_id, whatsapp_number, seller_id, contract_id,
+                observation, ad_id, whatsapp_number, seller_id, closer_id, supervisor_id, contract_id,
                 status, classification_flags,
-                first_seen_at, last_updated_at, epem_opportunity_id
+                first_seen_at, last_updated_at, contract_date, amount, epem_opportunity_id
             ) VALUES (
                 %(normalized_phone)s, %(fullname)s, %(email)s, %(enterprise_id)s, %(sources)s::jsonb,
-                %(observation)s, %(ad_id)s, %(whatsapp_number)s, %(seller_id)s, %(contract_id)s,
+                %(observation)s, %(ad_id)s, %(whatsapp_number)s, %(seller_id)s, %(closer_id)s, %(supervisor_id)s, %(contract_id)s,
                 %(status)s, %(classification_flags)s::jsonb,
-                %(first_seen_at)s, %(last_updated_at)s,
+                %(first_seen_at)s, %(last_updated_at)s, %(contract_date)s, %(amount)s,
                 %(epem_opportunity_id)s
             )
             ON CONFLICT (epem_opportunity_id) DO UPDATE SET
@@ -680,8 +685,12 @@ def run_externas_sync():
                 contract_id = EXCLUDED.contract_id,
                 status = EXCLUDED.status,
                 seller_id = EXCLUDED.seller_id,
+                closer_id = COALESCE(EXCLUDED.closer_id, crm.leads_unificados.closer_id),
+                supervisor_id = COALESCE(EXCLUDED.supervisor_id, crm.leads_unificados.supervisor_id),
+                amount = COALESCE(EXCLUDED.amount, crm.leads_unificados.amount),
                 classification_flags = EXCLUDED.classification_flags,
-                last_updated_at = EXCLUDED.last_updated_at
+                last_updated_at = EXCLUDED.last_updated_at,
+                contract_date = COALESCE(EXCLUDED.contract_date, crm.leads_unificados.contract_date)
         """
 
         batch_size = 500
@@ -707,11 +716,15 @@ def run_externas_sync():
                     "ad_id": "",
                     "whatsapp_number": ext["phone"] or "",
                     "seller_id": ext["seller_id"],
+                    "closer_id": ext["closer_id"],
+                    "supervisor_id": ext["supervisor_id"],
                     "contract_id": ext["contract_id"],
                     "status": 15,
                     "classification_flags": Json(flags),
                     "first_seen_at": ext["contract_date"],
                     "last_updated_at": ext["contract_date"],
+                    "contract_date": ext["contract_date"],
+                    "amount": ext["amount"],
                     "epem_opportunity_id": ext["epem_id"],
                 })
 
