@@ -149,6 +149,9 @@ async def dashboard_home(
     if contrato_status in ("5", "6"):
         conditions.append("status = 15")
         params["contrato_status"] = contrato_status
+    # CRM-FIX-7: Externos son ventas directas (walk-ins, referidos), no leads.
+    # Excluirlos del conteo de leads_nuevos para alinear con /resumen y /actividad/stats.
+    conditions.append("classification_flags->>'origen_lead' != 'Externo'")
     where = "WHERE " + " AND ".join(conditions) if conditions else ""
 
     sql = f"""
@@ -1481,7 +1484,7 @@ async def get_actividad(
     # Build UNION ALL query
     subqueries = []
 
-    # Tipo 1: lead_nuevo
+    # Tipo 1: lead_nuevo — CRM-FIX-7: excluir Externos (son ventas directas)
     if not tipo or tipo == "lead_nuevo":
         subqueries.append(f"""
             SELECT
@@ -1500,6 +1503,7 @@ async def get_actividad(
             FROM crm.leads_unificados
             WHERE {where_sql}
               AND first_seen_at >= NOW() - INTERVAL '7 days'
+              AND classification_flags->>'origen_lead' != 'Externo'
         """)
 
     # Tipo 2: gestion
@@ -1631,11 +1635,12 @@ async def get_actividad_stats(
         params["fuente"] = fuente
     where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
 
-    # Leads hoy
+    # Leads hoy — CRM-FIX-7: excluir Externos (son ventas directas, no leads)
     result = await db.execute(text(f"""
         SELECT COUNT(*) FROM crm.leads_unificados
         WHERE {where_sql}
           AND first_seen_at >= CURRENT_DATE
+          AND classification_flags->>'origen_lead' != 'Externo'
     """), params)
     leads_hoy = result.scalar()
 
@@ -1672,11 +1677,12 @@ async def get_actividad_stats(
     """), params)
     monto_hoy = float(result.fetchone().monto or 0)
 
-    # Semana (7 días) para contexto
+    # Semana (7 días) para contexto — CRM-FIX-7: excluir Externos
     result = await db.execute(text(f"""
         SELECT COUNT(*) FROM crm.leads_unificados
         WHERE {where_sql}
           AND first_seen_at >= CURRENT_DATE - INTERVAL '7 days'
+          AND classification_flags->>'origen_lead' != 'Externo'
     """), params)
     leads_semana = result.scalar()
 
