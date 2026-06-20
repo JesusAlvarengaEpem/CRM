@@ -234,8 +234,18 @@ class EPEMSync:
         if full:
             where_clause = f"WHERE so.status != 30 AND {quality_filter}"
         else:
+            # CRM-FIX-6: El watermark solo debe considerar IDs reales de EPEM
+            # (sales_opportunities.id), no los sinteticos de ThinkChat (negativos)
+            # ni de Externas (MD5 % 10M, que pueden colisionar en cualquier rango).
+            # Filtrar por sources que contenga 'botmaker' o 'manual' (origen EPEM real),
+            # excluyendo 'thinkchat' y 'externo' que usan IDs sinteticos.
             with self.pg_conn.cursor() as cur:
-                cur.execute("SELECT MAX(epem_opportunity_id) FROM crm.leads_unificados WHERE epem_opportunity_id > 0")
+                cur.execute(
+                    "SELECT MAX(epem_opportunity_id) FROM crm.leads_unificados "
+                    "WHERE epem_opportunity_id > 0 "
+                    "  AND sources::text NOT LIKE '%thinkchat%' "
+                    "  AND sources::text NOT LIKE '%externo%'"
+                )
                 last_id = cur.fetchone()[0]
             if last_id:
                 where_clause = f"WHERE so.id > {int(last_id)} AND so.status != 30 AND {quality_filter}"
