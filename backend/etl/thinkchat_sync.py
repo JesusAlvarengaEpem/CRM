@@ -50,10 +50,12 @@ class ThinkChatSync:
 
         Reglas:
           - c.date BETWEEN :df AND :dt
-          - c.request_financing_number IS NULL
-          - c.enterprise_id IN (1, 2, 5)
+          - c.enterprise_id IN (1, 2, 3, 4, 5, 9, 14)
           - c.status IN (1, 2, 3, 5, 6)  -- cualquier no-cancelado, NO solo =5
           - LEFT JOIN phone_numbers pn — usa pn.number, no cl.contact
+
+        CRM-FIX-5: Ahora guarda TODOS los contracts por phone (1:N), no solo el primero.
+        El matching por cercania temporal se hace en sync_from_excel.
         """
         if self._venta_phones_cache is not None:
             return self._venta_phones_cache
@@ -85,10 +87,8 @@ class ThinkChatSync:
         """
 
         phones: set[str] = set()
-        contract_map: dict[str, int] = {}
-        contract_date_map: dict[str, str] = {}  # phone → contract_date
-        contract_seller_map: dict[str, int] = {}  # phone → seller_id
-        contract_enterprise_map: dict[str, int] = {}  # CRM-FIX-2: phone → enterprise_id REAL del contract EPEM
+        # CRM-FIX-5: dict phone → lista de contracts (1:N)
+        contracts_by_phone: dict[str, list[dict]] = {}
         try:
             with pymysql.connect(**epem, connect_timeout=10, cursorclass=pymysql.cursors.SSCursor) as conn:
                 with conn.cursor() as cur:
@@ -97,28 +97,95 @@ class ThinkChatSync:
                         contract_id, enterprise_id, contract_date, seller_id, phone_number, client_contact = row
                         phone_to_norm = phone_number or client_contact
                         pn = phone_norm(phone_to_norm, fmt="intl")
-                        if pn and pn not in contract_map:
-                            contract_map[pn] = contract_id
-                            contract_date_map[pn] = str(contract_date) if contract_date else None
-                            contract_seller_map[pn] = seller_id if seller_id else None
-                            contract_enterprise_map[pn] = enterprise_id
+                        if pn:
+                            if pn not in contracts_by_phone:
+                                contracts_by_phone[pn] = []
+                            # Evitar duplicados exactos (mismo contract_id + phone)
+                            existing_ids = {c["contract_id"] for c in contracts_by_phone[pn]}
+                            if contract_id not in existing_ids:
+                                contracts_by_phone[pn].append({
+                                    "contract_id": contract_id,
+                                    "enterprise_id": enterprise_id,
+                                    "contract_date": str(contract_date) if contract_date else None,
+                                    "seller_id": seller_id if seller_id else None,
+                                })
                             phones.add(pn)
             self._venta_phones_cache = phones
-            self._contract_map_cache = contract_map
-            self._contract_date_cache = contract_date_map
-            self._contract_seller_cache = contract_seller_map
-            self._contract_enterprise_cache = contract_enterprise_map
+            self._contracts_by_phone_cache = contracts_by_phone
+            # Mantener caches legacy para compatibilidad (primer contract de cada phone)
+            self._contract_map_cache = {pn: contracts[0]["contract_id"] for pn, contracts in contracts_by_phone.items()}
+            self._contract_date_cache = {pn: contracts[0]["contract_date"] for pn, contracts in contracts_by_phone.items()}
+            self._contract_seller_cache = {pn: contracts[0]["seller_id"] for pn, contracts in contracts_by_phone.items()}
+            self._contract_enterprise_cache = {pn: contracts[0]["enterprise_id"] for pn, contracts in contracts_by_phone.items()}
+
+            total_contracts = sum(len(v) for v in contracts_by_phone.values())
+            multi = sum(1 for v in contracts_by_phone.values() if len(v) > 1)
             logger.info(
-                f"Cross-match: {len(phones)} unique phones, "
-                f"contracts status IN(1,2,3,5,6), enterprise IN(1,2,3,4,5,9,14), "
+                f"Cross-match: {len(phones)} unique phones, {total_contracts} contracts "
+                f"({multi} phones with multiple contracts), "
+                f"status IN(1,2,3,5,6), enterprise IN(1,2,3,4,5,9,14), "
                 f"{date_from} -> {date_to}"
             )
             return phones
         except Exception as e:
             logger.error(f"EPEM cross-match failed: {e}. Continuing without venta flag.")
             self._venta_phones_cache = set()
+            self._contracts_by_phone_cache = {}
             self._contract_map_cache = {}
             return set()
+
+    @staticmethod
+    def _find_best_contract_match(
+        contracts: list[dict],
+        fecha_ingreso: datetime,
+        max_lookback_days: int = 30,
+        max_lookahead_days: int = 365,
+    ) -> dict | None:
+        """
+        CRM-FIX-5: De una lista de contracts para un phone, elegir el mas cercano
+        temporalmente al fecha_ingreso del lead.
+
+        Logica:
+          - Ventana valida: contract_date >= fecha_ingreso - max_lookback_days
+                            AND contract_date <= fecha_ingreso + max_lookahead_days
+          - Priorizar contracts DESPUES del lead (gente que compro despues de contactarse)
+          - Si hay multiples en el futuro, elegir el mas cercano
+          - Si no hay en el futuro, elegir el mas cercano en el pasado (regestion)
+        """
+        if not contracts:
+            return None
+
+        lookback_limit = fecha_ingreso - timedelta(days=max_lookback_days)
+        lookahead_limit = fecha_ingreso + timedelta(days=max_lookahead_days)
+
+        candidates = []
+        for c in contracts:
+            cd_str = c.get("contract_date")
+            if not cd_str:
+                continue
+            try:
+                cd = datetime.strptime(cd_str, "%Y-%m-%d")
+            except (ValueError, TypeError):
+                continue
+            if lookback_limit <= cd <= lookahead_limit:
+                candidates.append((c, cd))
+
+        if not candidates:
+            return None
+
+        # Split: futuros (cd >= fecha_ingreso) vs pasados
+        futuros = [(c, cd) for c, cd in candidates if cd >= fecha_ingreso]
+        pasados = [(c, cd) for c, cd in candidates if cd < fecha_ingreso]
+
+        if futuros:
+            # Mas cercano despues del lead
+            best = min(futuros, key=lambda x: x[1] - fecha_ingreso)
+            return best[0]
+        if pasados:
+            # Mas cercano antes del lead (regestion)
+            best = min(pasados, key=lambda x: fecha_ingreso - x[1])
+            return best[0]
+        return None
 
     def sync_from_excel(self, leads: list[dict]) -> dict:
         """
@@ -146,10 +213,7 @@ class ThinkChatSync:
 
         # 2) Fetch phones con venta confirmada
         venta_phones = self._fetch_venta_phones(min_fecha, max_fecha)
-        contract_map = getattr(self, "_contract_map_cache", {})
-        contract_date_map = getattr(self, "_contract_date_cache", {})
-        contract_seller_map = getattr(self, "_contract_seller_cache", {})
-        contract_enterprise_map = getattr(self, "_contract_enterprise_cache", {})
+        contracts_by_phone = getattr(self, "_contracts_by_phone_cache", {})
 
         # 3) SQL de UPSERT — mismo target epem_opportunity_id para idempotencia
         # IMPORTANTE: contract_id se guarda en la COLUMNA (no solo en jsonb) para que
@@ -232,16 +296,28 @@ class ThinkChatSync:
                 enterprise_id = lead.get("enterprise_id")
                 fecha_ingreso = lead.get("fecha_ingreso", now)
 
-                # 4) Cross-match: es venta?
+                # 4) Cross-match: es venta? — CRM-FIX-5: matching por cercania temporal
                 es_venta = phone in venta_phones
+                contract_id_real = None
+                contract_date_str = None
+                seller_id_real = None
                 if es_venta:
-                    ventas_matcheadas += 1
-                    contract_id_real = contract_map.get(phone)
-                    contract_date_str = contract_date_map.get(phone)
-                    # CRM-FIX-2: usar enterprise_id REAL del contract EPEM, no del lead ThinkChat
-                    enterprise_id_real = contract_enterprise_map.get(phone)
-                    if enterprise_id_real is not None:
-                        enterprise_id = enterprise_id_real
+                    # Buscar el contract mas cercano a fecha_ingreso del lead
+                    phone_contracts = contracts_by_phone.get(phone, [])
+                    best = self._find_best_contract_match(phone_contracts, fecha_ingreso)
+                    if best:
+                        ventas_matcheadas += 1
+                        contract_id_real = best["contract_id"]
+                        contract_date_str = best["contract_date"]
+                        seller_id_real = best["seller_id"]
+                        # CRM-FIX-2: usar enterprise_id REAL del contract EPEM
+                        if best["enterprise_id"] is not None:
+                            enterprise_id = best["enterprise_id"]
+                    else:
+                        # Phone en venta_phones pero ningun contract en ventana temporal
+                        es_venta = False
+
+                if es_venta:
                     # epem_opportunity_id deterministico: MD5(phone|enterprise) → estable entre reinicios
                     seed = f"{phone}|{enterprise_id}"
                     epem_id = -(int(hashlib.md5(seed.encode()).hexdigest()[:8], 16) % 10_000_000)
@@ -260,7 +336,6 @@ class ThinkChatSync:
                     seed = f"{phone}|{enterprise_id}"
                     epem_id = -(int(hashlib.md5(seed.encode()).hexdigest()[:8], 16) % 10_000_000)
                     origen = "ThinkChat"
-                    contract_id_real = None
                     lead_status = 1  # Nuevo
 
                 # Calcular tipo_cartera: Caliente si ingreso y venta en mismo mes/año
@@ -304,7 +379,7 @@ class ThinkChatSync:
                     "observation": observation[:2000] if observation else "",
                     "ad_id": ad_id,
                     "whatsapp_number": phone,
-                    "seller_id": contract_seller_map.get(phone) if es_venta else None,
+                    "seller_id": seller_id_real if es_venta else None,
                     "contract_id": contract_id_real if es_venta else None,
                     "status": lead_status,
                     "lead_label": f"{origen}: {lead.get('fullname', '')}"[:255],

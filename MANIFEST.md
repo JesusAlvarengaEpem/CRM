@@ -1,66 +1,80 @@
 # MANIFEST - crm-unificado.
 
-*Generado por Minerva - 2026-06-17 20:28:01*
+*Generado por Minerva - 2026-06-20 00:04:06*
 
 ```markdown
-# MANIFEST.md - CRM Unificado
+# MANIFEST.md – CRM Unificado
 
 ## Propósito
-Sistema backend para un CRM unificado que centraliza datos de clientes, interacciones y procesos ETL. Proporciona una API RESTful para integración con frontends y servicios externos.
+Backend unificado para la gestión de clientes (CRM), que integra datos desde múltiples fuentes mediante procesos ETL, expone una API REST y persiste en base de datos relacional.
 
 ## Estructura del proyecto
 ```
-.
+crm-unificado/
 ├── backend/
 │   ├── app/
 │   │   ├── core/          # Configuración, seguridad, dependencias
 │   │   ├── middleware/     # Autenticación, logging, CORS
-│   │   ├── models/        # Modelos de datos (ORM)
-│   │   ├── routers/       # Endpoints de la API
-│   │   └── services/      # Lógica de negocio y casos de uso
+│   │   ├── models/        # Modelos de datos (SQLAlchemy / ORM)
+│   │   ├── routers/       # Endpoints de la API (clientes, contactos, etc.)
+│   │   └── services/      # Lógica de negocio y comunicación con DB
 │   ├── db/
-│   │   └── migrations/    # Migraciones de base de datos (Alembic)
+│   │   └── migrations/    # Migraciones de esquema (Alembic)
 │   └── etl/               # Scripts de extracción, transformación y carga
+├── docker-compose.yml     # Orquestación de servicios (app + DB)
+├── .env                   # Variables de entorno (credenciales, URLs)
 ├── .dockerignore
-├── .env                   # Variables de entorno (no versionado)
-├── docker-compose.yml     # Orquestación de servicios (API, DB, etc.)
-└── README.md
+├── .gitignore
+├── README.md
+└── MANIFEST.md
 ```
 
 ## Archivos clave
-- **`docker-compose.yml`**: Levanta la aplicación, base de datos y servicios auxiliares.
-- **`.env`**: Define credenciales, URLs de base de datos y configuraciones sensibles.
-- **`backend/app/core/`**: Contiene `config.py` y `security.py` para manejo de variables de entorno y autenticación.
-- **`backend/app/routers/`**: Define los endpoints REST (clientes, usuarios, reportes, etc.).
-- **`backend/app/models/`**: Modelos SQLAlchemy que representan las tablas de la base de datos.
-- **`backend/db/migrations/`**: Migraciones versionadas con Alembic para evolución del esquema.
-- **`backend/etl/`**: Scripts para importar/exportar datos desde fuentes externas (CSV, APIs, etc.).
+- **`backend/app/core/config.py`** – Carga variables desde `.env` y centraliza ajustes.
+- **`backend/app/routers/`** – Define rutas como `/clientes`, `/contactos`, `/oportunidades`.
+- **`backend/app/services/`** – Contiene la lógica transaccional y validaciones.
+- **`backend/db/migrations/`** – Control de versiones del esquema; ejecutar con Alembic.
+- **`backend/etl/`** – Scripts para importar/exportar datos desde/hacia sistemas externos.
+- **`docker-compose.yml`** – Levanta la aplicación y la base de datos (PostgreSQL/MySQL) en contenedores.
 
 ## Cómo usar
-1. **Configurar entorno**  
-   Copia `.env.example` (si existe) a `.env` y ajusta las variables (DB, secretos, etc.).
 
-2. **Iniciar servicios**  
-   ```bash
-   docker-compose up -d
-   ```
-   Esto levanta la API y la base de datos.
+### 1. Requisitos previos
+- Docker y Docker Compose instalados.
+- Python 3.10+ (para desarrollo local sin contenedores).
 
-3. **Aplicar migraciones**  
-   ```bash
-   docker-compose exec backend alembic upgrade head
-   ```
+### 2. Configuración
+Copiar `.env.example` (si existe) a `.env` y ajustar:
+- `DATABASE_URL` (cadena de conexión)
+- `SECRET_KEY` (para JWT)
+- Credenciales de fuentes ETL
 
-4. **Ejecutar procesos ETL (opcional)**  
-   ```bash
-   docker-compose exec backend python etl/importar_clientes.py
-   ```
+### 3. Ejecución con Docker
+```bash
+docker-compose up -d
+```
+Esto inicia la API (normalmente en `http://localhost:8000`) y la base de datos.
 
-5. **Acceder a la API**  
-   La documentación interactiva estará disponible en `http://localhost:8000/docs` (si usa FastAPI).
+### 4. Migraciones
+```bash
+docker-compose exec backend alembic upgrade head
+```
+O localmente: `cd backend && alembic upgrade head`
+
+### 5. Procesos ETL
+Ejecutar scripts dentro del contenedor o localmente:
+```bash
+docker-compose exec backend python etl/importar_clientes.py
+```
+
+### 6. Documentación de la API
+Acceder a Swagger UI en `/docs` o ReDoc en `/redoc` (si se usa FastAPI).
 
 ## Notas adicionales
-- El middleware incluye capa de autenticación (JWT) y registro de peticiones.
-- Los servicios encapsulan la lógica de negocio, separada de los routers.
-- La carpeta `etl` puede contener scripts independientes o tareas programadas con Celery/APScheduler.
+- El middleware de autenticación protege los endpoints sensibles; se requiere token JWT en el header `Authorization: Bearer <token>`.
+- Los modelos de datos están en `backend/app/models/`; cualquier cambio debe ir acompañado de una nueva migración.
+- Los scripts ETL pueden programarse con cron o ejecutarse manualmente para sincronizar datos.
+
+---
+*Última actualización: según el estado del repositorio.*
 ```
